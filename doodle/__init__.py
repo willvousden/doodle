@@ -48,8 +48,8 @@ def init_db() -> None:
     '''
     with open(_schema) as f:
         script = f.read()
-    with get_connection() as connection:
-        connection.executescript(script)
+    with get_connection() as c:
+        c.executescript(script)
 
 
 def validate_time(time: datetime) -> bool:
@@ -61,27 +61,30 @@ def validate_time(time: datetime) -> bool:
 
 
 def create_person(name: str, role: Role) -> int:
-    with get_connection(transaction=True) as connection:
-        return connection.execute('''
-                                  INSERT INTO person
-                                  (name, role)
-                                  VALUES
-                                  (:name, :role)
-                                  ''',
-                                  {'name': name, 'role': int(role)}) \
+    with get_connection(transaction=True) as c:
+        return c.execute('''
+                         INSERT INTO person
+                         (name, role)
+                         VALUES
+                         (:name, :role)
+                         ''',
+                         {'name': name, 'role': int(role)}) \
                          .lastrowid
 
 
 def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
-    with get_connection() as connection:
-        rows = connection.execute('''
-                                  SELECT p.name, p.role, t.time
-                                  FROM person p
-                                  LEFT JOIN person_time t
-                                  ON p.id = t.person_id
-                                  WHERE p.id = :id
-                                  ''',
-                                  {'id': id_}) \
+    '''
+    Get the times at which a person is available for an interview.
+    '''
+    with get_connection() as c:
+        rows = c.execute('''
+                         SELECT p.name, p.role, t.time
+                         FROM person p
+                         LEFT JOIN person_time t
+                         ON p.id = t.person_id
+                         WHERE p.id = :id
+                         ''',
+                         {'id': id_}) \
                          .fetchall()
         if rows:
             return (id_,
@@ -93,27 +96,31 @@ def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
 
 
 def add_times(id_: int, times: Iterable[datetime]) -> None:
+    '''
+    Add interview times for a given person.  Any times that already exist are replaced.  Returns the number of rows inserted.
+    '''
     params = ({'person_id': id_,
                'time': str(time)}
               for time in times)
 
-    with get_connection(transaction=True) as connection:
-        count = connection.execute('''
-                                   SELECT COUNT(*)
-                                   FROM person p
-                                   WHERE p.id = :id
-                                   ''', {'id': id_}) \
+    with get_connection(transaction=True) as c:
+        count = c.execute('''
+                          SELECT COUNT(*)
+                          FROM person p
+                          WHERE p.id = :id
+                          ''', {'id': id_}) \
                           .fetchone()[0]
         if count == 0:
             # No such person.
             raise KeyError(id_)
 
-        connection.executemany('''
-                               INSERT OR REPLACE INTO person_time
-                               (person_id, time)
-                               VALUES
-                               (:person_id, :time)
-                               ''', params)
+        return c.executemany('''
+                             INSERT OR REPLACE INTO person_time
+                             (person_id, time)
+                             VALUES
+                             (:person_id, :time)
+                             ''', params) \
+                         .rowcount
 
 
 def find_interview_times(ids: Iterable[int]) -> List[datetime]:
@@ -123,18 +130,18 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
     id_params = {f'id{n}': id_ for n, id_ in enumerate(ids)}
     id_list = ', '.join(f':{k}' for k in id_params.keys())
 
-    with get_connection() as connection:
+    with get_connection() as c:
         # Get all the times for any of the specified people.
-        cursor = connection.execute(f'''
-                                    SELECT t.time
-                                    FROM person p
-                                    JOIN person_time t
-                                    ON p.id = t.person_id
-                                    WHERE p.id IN ({id_list})
-                                    GROUP BY t.time
-                                    HAVING COUNT(p.id) = :count
-                                    ''',
-                                    {'count': len(id_params), **id_params})
+        cursor = c.execute(f'''
+                           SELECT t.time
+                           FROM person p
+                           JOIN person_time t
+                           ON p.id = t.person_id
+                           WHERE p.id IN ({id_list})
+                           GROUP BY t.time
+                           HAVING COUNT(p.id) = :count
+                           ''',
+                           {'count': len(id_params), **id_params})
         return [datetime.fromisoformat(r[0]) for r in cursor if r]
 
 
