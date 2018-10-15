@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import *
 
 _db_file = 'doodle.db'
-_schema = Path(__name__).parent / 'schema.sql'
+_schema = Path(__file__).parent / 'schema.sql'
 
 __all__ = ['get_app', 'init_db', 'Role']
 
