@@ -180,13 +180,14 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
 def get_app() -> Flask:
     app = Flask(__name__)
 
-    def person(id_: int, role: Role) -> Response:
+    def person(role: Role, id_: int=None) -> Response:
         if request.method == 'POST':
             # Add a new person, with no times.
             person = create_person(request.form['name'], role)
 
         if request.method == 'PUT':
             # Add times to a person.
+            assert id_ is not None
             try:
                 times = request.form.getlist('times', parse_time)
             except ValueError:
@@ -205,6 +206,7 @@ def get_app() -> Flask:
 
         if request.method == 'GET':
             # Get the times for a person.
+            assert id_ is not None
             try:
                 person = get_times(id_, role)
             except KeyError:
@@ -220,12 +222,12 @@ def get_app() -> Flask:
     @app.route('/candidate/', methods=['POST'])
     @app.route('/candidate/<int:id_>', methods=['GET', 'PUT'])
     def candidate(id_: int=None) -> Response:
-        return person(id_, Role.CANDIDATE)
+        return person(Role.CANDIDATE, id_)
 
     @app.route('/interviewer/', methods=['POST'])
     @app.route('/interviewer/<int:id_>', methods=['GET', 'PUT'])
     def interviewer(id_: int=None) -> Response:
-        return person(id_, Role.INTERVIEWER)
+        return person(Role.INTERVIEWER, id_)
 
     @app.route('/interview', methods=['GET'])
     def interview_times() -> Response:
