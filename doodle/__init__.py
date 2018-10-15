@@ -120,22 +120,22 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
     '''
     Get the times at which a list of people are all available.
     '''
-    id_params = {f':id{n}': id_ for n, id_ in enumerate(ids)}
-    id_list = ', '.join(id_params.keys())
+    id_params = {f'id{n}': id_ for n, id_ in enumerate(ids)}
+    id_list = ', '.join(f':{k}' for k in id_params.keys())
 
     with get_connection() as connection:
         # Get all the times for any of the specified people.
         cursor = connection.execute(f'''
                                     SELECT t.time
                                     FROM person p
-                                    WHERE p.id IN ({id_list})
                                     JOIN person_time t
                                     ON p.id = t.person_id
+                                    WHERE p.id IN ({id_list})
                                     GROUP BY t.time
                                     HAVING COUNT(p.id) = :count
                                     ''',
                                     {'count': len(id_params), **id_params})
-        return [datetime.fromisoformat(r[2]) for r in cursor if r]
+        return [datetime.fromisoformat(r[0]) for r in cursor if r]
 
 
 def get_app() -> Flask:
@@ -199,6 +199,8 @@ def get_app() -> Flask:
     @app.route('/interview', methods=['GET'])
     def common_times() -> Response:
         ids = request.args.getlist('id', int)
+        if not ids:
+            abort(400)
         times = find_interview_times(ids)
         return jsonify(ids=ids,
                        times=[str(t) for t in times])
