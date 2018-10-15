@@ -9,7 +9,7 @@ from flask import Flask, Response, jsonify, abort, request
 from functools import partial
 from typing import *
 
-_url = 'test.db'
+_url = 'doodle.db'
 _schema = 'schema.sql'
 
 __all__ = ['get_app', 'Role']
