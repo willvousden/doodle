@@ -75,7 +75,7 @@ def create_person(name: str, role: Role) -> Person:
     Add a new person to the database with a given name.  Returns the ID of the
     newly added person.
     '''
-    with get_connection(transaction=True) as c:
+    with get_connection() as c:
         id_ = c.execute('''
                         INSERT INTO person
                         (name, role)
@@ -121,7 +121,7 @@ def add_times(id_: int, role: Role, times: Iterable[datetime]) -> Person:
               for time in times)
 
     with get_connection(transaction=True) as c:
-        # Check that he person exists.
+        # Check that the person exists.
         count = c.execute('''
                           SELECT COUNT(*)
                           FROM person p
