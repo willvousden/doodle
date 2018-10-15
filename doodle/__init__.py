@@ -30,14 +30,14 @@ def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
     # explicitly.
     with closing(sqlite3.connect(_url, isolation_level=None)) as connection:
         if transaction:
-            connection.execute('BEGIN;')
+            connection.execute('BEGIN')
             try:
                 yield connection
             except:
-                connection.execute('ROLLBACK;')
+                connection.execute('ROLLBACK')
                 raise
             else:
-                connection.execute('COMMIT;')
+                connection.execute('COMMIT')
         else:
             yield connection
 
@@ -66,7 +66,7 @@ def create_person(name: str, role: Role) -> int:
                                   INSERT INTO person
                                   (name, role)
                                   VALUES
-                                  (:name, :role);
+                                  (:name, :role)
                                   ''',
                                   {'name': name, 'role': int(role)}) \
                          .lastrowid
