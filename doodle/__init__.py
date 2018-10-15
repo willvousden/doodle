@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import enum
 import sqlite3
 
@@ -24,7 +25,7 @@ class Slot:
         if isinstance(self.date, str):
             self.date = datetime.date.fromisoformat(self.date)
         if isinstance(self.hour, str):
-            self.hour = int(hour)
+            self.hour = int(self.hour)
 
         if self.hour < 0 or self.hour > 23:
             raise ValueError(f'invalid hour: {self.hour}')
@@ -95,25 +96,25 @@ def get_slots(id_: int) -> Tuple[int, str, Role, List[Slot]]:
             return (id_,
                     rows[0][0],
                     Role(rows[0][1]),
-                    [Slot(r[2], r[3]) for r in rows])
+                    [Slot(r[2], r[3]) for r in rows if r[2] and r[3]])
         else:
-            raise ValueError
+            raise KeyError(id_)
 
 
 def add_slots(id_: int, slots: Iterable[Slot]) -> None:
     params = ({'person_id': id_,
-               'date': slot.date,
+               'date': str(slot.date),
                'hour': slot.hour}
               for slot in slots)
 
     with get_cursor() as cursor:
         try:
-            cursor.execute('''
-                           INSERT INTO slot
-                           (person_id, date, hour)
-                           VALUES
-                           (:person_id, :date, :hour)
-                           ''', *params)
+            cursor.executemany('''
+                               INSERT INTO slot
+                               (person_id, date, hour)
+                               VALUES
+                               (:person_id, :date, :hour)
+                               ''', params)
         except sqlite3.IntegrityError as e:
             # No such person.
             raise KeyError(id_) from e
@@ -135,7 +136,7 @@ def find_interview_slots(ids: Iterable[int]) -> List[Slot]:
                        HAVING COUNT(p.id) = :count
                        ''',
                        {'count': len(ids), **id_params})
-        return [Slot(r[3], r[4]) for r in rows]
+        return [Slot(r[3], r[4]) for r in rows if r[2] and r[3]]
 
 
 def get_app() -> Flask:
@@ -154,13 +155,20 @@ def get_app() -> Flask:
 
     def slots(role: Role, id_: int) -> Response:
         if request.method == 'PUT':
-            slots = request.form.getlist('slots')
+            try:
+                slots = [Slot.parse(s) for s in request.form.getlist('slots')]
+            except ValueError:
+                # Couldn't parse the times.
+                abort(400)
+
             if not slots:
+                # No times provided.
                 abort(400)
 
             try:
-                add_slots(id_, map(Slot.parse, slots))
-            except ValueError:
+                add_slots(id_, slots)
+            except KeyError:
+                # The person wasn't found.
                 abort(404)
 
             return jsonify()
@@ -168,7 +176,7 @@ def get_app() -> Flask:
         if request.method == 'GET':
             try:
                 id_, name, role_, slots = get_slots(id_)
-            except ValueError:
+            except KeyError:
                 abort(404)
 
             if role != role_:
