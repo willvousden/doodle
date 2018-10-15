@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import enum
 import sqlite3
 
@@ -101,7 +99,8 @@ def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
 
 def add_times(id_: int, times: Iterable[datetime]) -> None:
     '''
-    Add interview times for a given person.  Any times that already exist are replaced.  Returns the number of rows inserted.
+    Add interview times for a given person.  Any times that already exist are
+    replaced.  Returns the number of rows inserted.
     '''
     params = ({'person_id': id_,
                'time': str(time)}
@@ -151,8 +150,6 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
 
 
 def get_app() -> Flask:
-    init_db()
-
     app = Flask(__name__)
 
     def new_person(role: Role) -> Response:
