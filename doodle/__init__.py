@@ -29,7 +29,8 @@ class Person(NamedTuple):
 @contextmanager
 def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
     '''
-    Get a sqlite3 connection object, optionally in a transaction.
+    Get a contextmanager for a sqlite3 connection object, optionally in a
+    transaction.
     '''
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
