@@ -21,7 +21,7 @@ class Role(enum.IntEnum):
 
 
 @contextmanager
-def get_cursor(transaction: bool=False) -> sqlite3.Cursor:
+def get_cursor(transaction: bool=False) -> Iterator[sqlite3.Cursor]:
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
     # manually.
@@ -117,7 +117,8 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
                        GROUP BY t.time
                        HAVING COUNT(p.id) = :count
                        ''',
-                       {'count': len(ids), **id_params})
+                       {'count': len(id_params), **id_params})
+        rows = cursor.fetchall()
         return [datetime.fromisoformat(r[2]) for r in rows if r]
 
 
