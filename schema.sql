@@ -4,10 +4,9 @@ CREATE TABLE IF NOT EXISTS person (
     name TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS slot (
+CREATE TABLE IF NOT EXISTS person_time (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id INTEGER,
-    date TEXT NOT NULL,
-    hour INTEGER NOT NULL,
+    time TEXT NOT NULL,
     FOREIGN KEY (person_id) REFERENCES person (id)
 );

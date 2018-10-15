@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import datetime
 import enum
 import sqlite3
 
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from datetime import datetime
 from flask import Flask, Response, jsonify, abort, request
 from functools import partial
 from typing import *
@@ -13,30 +12,7 @@ from typing import *
 _url = 'test.db'
 _schema = 'schema.sql'
 
-__all__ = ['get_app', 'Slot', 'Role']
-
-
-@dataclass
-class Slot:
-    date: datetime.date
-    hour: int
-
-    def __post_init__(self):
-        if isinstance(self.date, str):
-            self.date = datetime.date.fromisoformat(self.date)
-        if isinstance(self.hour, str):
-            self.hour = int(self.hour)
-
-        if self.hour < 0 or self.hour > 23:
-            raise ValueError(f'invalid hour: {self.hour}')
-
-    @classmethod
-    def parse(cls, string: str) -> Slot:
-        date, hour = string.split()
-        return Slot(date, hour)
-
-    def __str__(self) -> str:
-        return f'{self.date} {self.hour}'
+__all__ = ['get_app', 'Role']
 
 
 class Role(enum.IntEnum):
@@ -69,6 +45,10 @@ def init_db() -> None:
         cursor.executescript(script)
 
 
+def validate_time(time: datetime) -> bool:
+    return all(t == 0 for t in (time.minute, time.second, time.microsecond))
+
+
 def create_person(name: str, role: Role) -> int:
     with get_cursor(transaction=True) as cursor:
         cursor.execute('''
@@ -81,13 +61,13 @@ def create_person(name: str, role: Role) -> int:
         return cursor.lastrowid
 
 
-def get_slots(id_: int) -> Tuple[int, str, Role, List[Slot]]:
+def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
     with get_cursor() as cursor:
         cursor.execute('''
-                       SELECT p.name, p.role, s.date, s.hour
+                       SELECT p.name, p.role, t.time
                        FROM person p
-                       LEFT JOIN slot s
-                       ON p.id = s.person_id
+                       LEFT JOIN person_time t
+                       ON p.id = t.person_id
                        WHERE p.id = :id
                        ''',
                        {'id': id_})
@@ -96,47 +76,46 @@ def get_slots(id_: int) -> Tuple[int, str, Role, List[Slot]]:
             return (id_,
                     rows[0][0],
                     Role(rows[0][1]),
-                    [Slot(r[2], r[3]) for r in rows if r[2] and r[3]])
+                    [datetime.fromisoformat(r[2]) for r in rows if r])
         else:
             raise KeyError(id_)
 
 
-def add_slots(id_: int, slots: Iterable[Slot]) -> None:
+def add_times(id_: int, times: Iterable[datetime]) -> None:
     params = ({'person_id': id_,
-               'date': str(slot.date),
-               'hour': slot.hour}
-              for slot in slots)
+               'time': str(time)}
+              for time in times)
 
     with get_cursor() as cursor:
         try:
             cursor.executemany('''
-                               INSERT INTO slot
-                               (person_id, date, hour)
+                               INSERT INTO person_time
+                               (person_id, time)
                                VALUES
-                               (:person_id, :date, :hour)
+                               (:person_id, :time)
                                ''', params)
         except sqlite3.IntegrityError as e:
             # No such person.
             raise KeyError(id_) from e
 
 
-def find_interview_slots(ids: Iterable[int]) -> List[Slot]:
+def find_interview_times(ids: Iterable[int]) -> List[datetime]:
     id_params = {f':id{n}': id_ for n, id_ in enumerate(ids)}
     id_list = ', '.join(id_params.keys())
 
     with get_cursor() as cursor:
-        # Get all the slots for any of the specified people.
+        # Get all the times for any of the specified people.
         cursor.execute(f'''
-                       SELECT s.date, s.hour
+                       SELECT t.time
                        FROM person p
                        WHERE p.id IN ({id_list})
-                       JOIN slots s
-                       ON p.id = s.person_id
-                       GROUP BY s.date, s.hour
+                       JOIN person_time t
+                       ON p.id = t.person_id
+                       GROUP BY t.time
                        HAVING COUNT(p.id) = :count
                        ''',
                        {'count': len(ids), **id_params})
-        return [Slot(r[3], r[4]) for r in rows if r[2] and r[3]]
+        return [datetime.fromisoformat(r[2]) for r in rows if r]
 
 
 def get_app() -> Flask:
@@ -153,20 +132,27 @@ def get_app() -> Flask:
     app.route('/interviewer/', endpoint='new_interviewer', methods=['POST']) \
              (partial(new_person, Role.INTERVIEWER))
 
-    def slots(role: Role, id_: int) -> Response:
+    def times(role: Role, id_: int) -> Response:
         if request.method == 'PUT':
+            invalid_times = False
             try:
-                slots = [Slot.parse(s) for s in request.form.getlist('slots')]
+                times = [datetime.fromisoformat(t)
+                         for t in request.form.getlist('times')]
             except ValueError:
                 # Couldn't parse the times.
-                abort(400)
+                invalid_times = True
 
-            if not slots:
+            # Times must be on the hour.
+            invalid_times |= not all(map(validate_time, times))
+            if invalid_times:
+                abort(400, description='Invalid times given.')
+
+            if not times:
                 # No times provided.
-                abort(400)
+                abort(400, description='No times given.')
 
             try:
-                add_slots(id_, slots)
+                add_times(id_, times)
             except KeyError:
                 # The person wasn't found.
                 abort(404)
@@ -175,7 +161,7 @@ def get_app() -> Flask:
 
         if request.method == 'GET':
             try:
-                id_, name, role_, slots = get_slots(id_)
+                id_, name, role_, times = get_times(id_)
             except KeyError:
                 abort(404)
 
@@ -184,17 +170,17 @@ def get_app() -> Flask:
 
             return jsonify(id=id_,
                            name=name,
-                           slots=[str(s) for s in slots])
-    app.route('/candidate/<int:id_>', endpoint='candidate_slots', methods=['GET', 'PUT']) \
-             (partial(slots, Role.CANDIDATE))
-    app.route('/interviewer/<int:id_>', endpoint='interviewer_slots', methods=['GET', 'PUT']) \
-             (partial(slots, Role.INTERVIEWER))
+                           times=[str(t) for t in times])
+    app.route('/candidate/<int:id_>', endpoint='candidate_times', methods=['GET', 'PUT']) \
+             (partial(times, Role.CANDIDATE))
+    app.route('/interviewer/<int:id_>', endpoint='interviewer_times', methods=['GET', 'PUT']) \
+             (partial(times, Role.INTERVIEWER))
 
     @app.route('/interview', methods=['GET'])
-    def common_slots() -> Response:
+    def common_times() -> Response:
         ids = request.args.getlist('id', int)
-        slots = find_interview_slots(ids)
+        times = find_interview_times(ids)
         return jsonify(ids=ids,
-                       slots=[str(s) for s in slots])
+                       times=[str(t) for t in times])
 
     return app
