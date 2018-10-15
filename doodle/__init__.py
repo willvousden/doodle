@@ -1,19 +1,27 @@
-import enum
 import sqlite3
 
 from contextlib import closing, contextmanager
 from datetime import datetime
+from enum import IntEnum
 from flask import Flask, Response, jsonify, abort, request
 from functools import partial
+from pathlib import Path
 from typing import *
 
-_url = 'doodle.db'
-_schema = 'schema.sql'
+_db_file = 'doodle.db'
+_schema = Path(__name__).parent / 'schema.sql'
 
 __all__ = ['get_app', 'Role']
 
 
-class Role(enum.IntEnum):
+class Person(NamedTuple):
+    id_: int
+    name: str
+    role: Role
+    times: List[datetime]
+
+
+class Role(IntEnum):
     INTERVIEWER = 1
     CANDIDATE = 2
 
@@ -26,7 +34,7 @@ def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
     # explicitly.
-    with closing(sqlite3.connect(_url, isolation_level=None)) as connection:
+    with closing(sqlite3.connect(_db_file, isolation_level=None)) as connection:
         if transaction:
             connection.execute('BEGIN')
             try:
@@ -58,23 +66,24 @@ def validate_time(time: datetime) -> bool:
     return all(t == 0 for t in (time.minute, time.second, time.microsecond))
 
 
-def create_person(name: str, role: Role) -> int:
+def create_person(name: str, role: Role) -> Person:
     '''
     Add a new person to the database with a given name.  Returns the ID of the
     newly added person.
     '''
     with get_connection(transaction=True) as c:
-        return c.execute('''
-                         INSERT INTO person
-                         (name, role)
-                         VALUES
-                         (:name, :role)
-                         ''',
-                         {'name': name, 'role': int(role)}) \
-                         .lastrowid
+        id_ = c.execute('''
+                        INSERT INTO person
+                        (name, role)
+                        VALUES
+                        (:name, :role)
+                        ''',
+                        {'name': name, 'role': int(role)}) \
+                        .lastrowid
+        return Person(id_, name, role, [])
 
 
-def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
+def get_times(id_: int) -> Person:
     '''
     Get the times at which a person is available for an interview.
     '''
@@ -89,24 +98,25 @@ def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
                          {'id': id_}) \
                          .fetchall()
         if rows:
-            return (id_,
-                    rows[0][0],
-                    Role(rows[0][1]),
-                    [datetime.fromisoformat(r[2]) for r in rows if r])
+            return Person(id_,
+                          rows[0][0],
+                          Role(rows[0][1]),
+                          [datetime.fromisoformat(r[2]) for r in rows if r])
         else:
             raise KeyError(id_)
 
 
-def add_times(id_: int, times: Iterable[datetime]) -> None:
+def add_times(id_: int, times: Iterable[datetime]) -> Person:
     '''
     Add interview times for a given person.  Any times that already exist are
-    replaced.  Returns the number of rows inserted.
+    replaced.  Returns the same as ``get_times``.
     '''
     params = ({'person_id': id_,
                'time': str(time)}
               for time in times)
 
     with get_connection(transaction=True) as c:
+        # Check that he person exists.
         count = c.execute('''
                           SELECT COUNT(*)
                           FROM person p
@@ -117,13 +127,25 @@ def add_times(id_: int, times: Iterable[datetime]) -> None:
             # No such person.
             raise KeyError(id_)
 
-        return c.executemany('''
-                             INSERT OR REPLACE INTO person_time
-                             (person_id, time)
-                             VALUES
-                             (:person_id, :time)
-                             ''', params) \
-                         .rowcount
+        c.executemany('''
+                      INSERT OR REPLACE INTO person_time
+                      (person_id, time)
+                      VALUES
+                      (:person_id, :time)
+                      ''', params)
+        rows = c.execute('''
+                         SELECT p.name, p.role, t.time
+                         FROM person p
+                         LEFT JOIN person_time t
+                         ON p.id = t.person_id
+                         WHERE p.id = :id
+                         ''',
+                         {'id': id_}) \
+                         .fetchall()
+        return Person(id_,
+                      rows[0][0],
+                      Role(rows[0][1]),
+                      [datetime.fromisoformat(r[2]) for r in rows if r])
 
 
 def find_interview_times(ids: Iterable[int]) -> List[datetime]:
@@ -152,16 +174,22 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
 def get_app() -> Flask:
     app = Flask(__name__)
 
-    def new_person(role: Role) -> Response:
+    def person(role: Role) -> Response:
         name = request.form['name']
-        id_ = create_person(name, role)
-        return jsonify(id=id_)
-    app.route('/candidate/', endpoint='new_candidate', methods=['POST']) \
-             (partial(new_person, Role.CANDIDATE))
-    app.route('/interviewer/', endpoint='new_interviewer', methods=['POST']) \
-             (partial(new_person, Role.INTERVIEWER))
+        person = create_person(name, role)
+        return jsonify(id=person.id_,
+                       name=person.name,
+                       times=[str(t) for t in person.times])
 
-    def times(role: Role, id_: int) -> Response:
+    @app.route('/candidate/', methods=['POST'])
+    def candidate() -> Response:
+        return person(Role.CANDIDATE)
+
+    @app.route('/interviewer/', methods=['POST'])
+    def interviewer() -> Response:
+        return person(Role.INTERVIEWER)
+
+    def person_times(role: Role, id_: int) -> Response:
         if request.method == 'PUT':
             invalid_times = False
             try:
@@ -172,7 +200,7 @@ def get_app() -> Flask:
                 invalid_times = True
 
             # Times must be on the hour.
-            invalid_times |= not all(map(validate_time, times))
+            invalid_times = invalid_times or not all(map(validate_time, times))
             if invalid_times:
                 abort(400, description='Invalid times given.')
 
@@ -181,32 +209,34 @@ def get_app() -> Flask:
                 abort(400, description='No times given.')
 
             try:
-                add_times(id_, times)
+                person = add_times(id_, times)
             except KeyError:
                 # The person wasn't found.
                 abort(404)
 
-            return jsonify()
-
         if request.method == 'GET':
             try:
-                id_, name, role_, times = get_times(id_)
+                person = get_times(id_)
             except KeyError:
                 abort(404)
 
-            if role != role_:
+            if role != person.role:
                 abort(404)
 
-            return jsonify(id=id_,
-                           name=name,
-                           times=[str(t) for t in times])
-    app.route('/candidate/<int:id_>', endpoint='candidate_times', methods=['GET', 'PUT']) \
-             (partial(times, Role.CANDIDATE))
-    app.route('/interviewer/<int:id_>', endpoint='interviewer_times', methods=['GET', 'PUT']) \
-             (partial(times, Role.INTERVIEWER))
+        return jsonify(id=person.id_,
+                       name=person.name,
+                       times=[str(t) for t in person.times])
+
+    @app.route('/candidate/<int:id_>', methods=['GET', 'PUT'])
+    def candidate_times(id_: int) -> Response:
+        return person_times(Role.CANDIDATE, id_)
+
+    @app.route('/interviewer/<int:id_>', methods=['GET', 'PUT'])
+    def interviewer_times(id_: int) -> Response:
+        return person_times(Role.INTERVIEWER, id_)
 
     @app.route('/interview', methods=['GET'])
-    def common_times() -> Response:
+    def interview_times() -> Response:
         ids = request.args.getlist('id', int)
         if not ids:
             abort(400)
