@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import enum
-import records
+import sqlite3
 
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from flask import Flask, Response, jsonify, abort, request
-from itertools import groupby
-from operator import attrgetter
-from sqlalchemy.exc import IntegrityError
+from functools import partial
 from typing import *
 
-_url = 'sqlite:///test.db'
+_url = 'test.db'
 _schema = 'schema.sql'
 
 __all__ = ['get_app', 'Slot', 'Role']
@@ -44,44 +43,59 @@ class Role(enum.IntEnum):
     CANDIDATE = 2
 
 
-def get_db() -> records.Database:
-    return records.Database(_url)
+@contextmanager
+def get_cursor(transaction: bool=False) -> sqlite3.Cursor:
+    # Python's DB API transaction model is really weird and counter-intuitive,
+    # so just put the connection in auto-commit mode and manage transactions
+    # manually.
+    with closing(sqlite3.connect(_url, isolation_level=None)) as connection:
+        if transaction:
+            connection.execute('BEGIN;')
+            try:
+                yield connection.cursor()
+            except:
+                connection.execute('ROLLBACK;')
+            else:
+                connection.execute('COMMIT;')
+        else:
+            yield connection.cursor()
 
 
 def init_db() -> None:
     with open(_schema) as f:
-        statements = f.read().split('\n\n')
-
-    with get_db() as db, db.transaction() as t:
-        for statement in statements:
-            t.query(statement)
+        script = f.read()
+    with get_cursor() as cursor:
+        cursor.executescript(script)
 
 
 def create_person(name: str, role: Role) -> int:
-    with get_db() as db, db.transaction() as t:
-        db.query('''
-                 INSERT INTO person
-                 (name, role)
-                 VALUES
-                 (:name, :role)
-                 ''', name=name, role=int(role))
-        return t.query('SELECT last_insert_rowid() AS id').one().id
+    with get_cursor(transaction=True) as cursor:
+        cursor.execute('''
+                       INSERT INTO person
+                       (name, role)
+                       VALUES
+                       (:name, :role);
+                       ''',
+                       {'name': name, 'role': int(role)})
+        return cursor.lastrowid
 
 
 def get_slots(id_: int) -> Tuple[int, str, Role, List[Slot]]:
-    with get_db() as db:
-        rows = db.query('''
-                        SELECT p.name, p.role, s.date, s.hour
-                        FROM person p
-                        WHERE id_ = :id_
-                        LEFT JOIN slot s
-                        ON p.id = s.person_id
-                        ''', id=id_)
+    with get_cursor() as cursor:
+        cursor.execute('''
+                       SELECT p.name, p.role, s.date, s.hour
+                       FROM person p
+                       LEFT JOIN slot s
+                       ON p.id = s.person_id
+                       WHERE p.id = :id
+                       ''',
+                       {'id': id_})
+        rows = cursor.fetchall()
         if rows:
             return (id_,
-                    rows[0].name,
-                    Role(rows[0].role),
-                    [Slot(r.date, r.hour) for r in rows])
+                    rows[0][0],
+                    Role(rows[0][1]),
+                    [Slot(r[2], r[3]) for r in rows])
         else:
             raise ValueError
 
@@ -92,15 +106,15 @@ def add_slots(id_: int, slots: Iterable[Slot]) -> None:
                'hour': slot.hour}
               for slot in slots)
 
-    with get_db() as db:
+    with get_cursor() as cursor:
         try:
-            db.query('''
-                     INSERT INTO slot
-                     (person_id, date, hour)
-                     VALUES
-                     (:person_id, :date, :hour)
-                     ''', *params)
-        except IntegrityError as e:
+            cursor.execute('''
+                           INSERT INTO slot
+                           (person_id, date, hour)
+                           VALUES
+                           (:person_id, :date, :hour)
+                           ''', *params)
+        except sqlite3.IntegrityError as e:
             # No such person.
             raise KeyError(id_) from e
 
@@ -109,18 +123,19 @@ def find_interview_slots(ids: Iterable[int]) -> List[Slot]:
     id_params = {f':id{n}': id_ for n, id_ in enumerate(ids)}
     id_list = ', '.join(id_params.keys())
 
-    with get_db() as db:
+    with get_cursor() as cursor:
         # Get all the slots for any of the specified people.
-        rows = db.query(f'''
-                        SELECT s.date, s.hour
-                        FROM person p
-                        WHERE p.id IN ({id_list})
-                        JOIN slots s
-                        ON p.id = s.person_id
-                        GROUP BY s.date, s.hour
-                        HAVING COUNT(p.id) = :count
-                        ''', count=len(ids), **id_params)
-        return [Slot(r.date, r.hour) for r in rows]
+        cursor.execute(f'''
+                       SELECT s.date, s.hour
+                       FROM person p
+                       WHERE p.id IN ({id_list})
+                       JOIN slots s
+                       ON p.id = s.person_id
+                       GROUP BY s.date, s.hour
+                       HAVING COUNT(p.id) = :count
+                       ''',
+                       {'count': len(ids), **id_params})
+        return [Slot(r[3], r[4]) for r in rows]
 
 
 def get_app() -> Flask:
@@ -132,12 +147,12 @@ def get_app() -> Flask:
         name = request.form['name']
         id_ = create_person(name, role)
         return jsonify(id=id_)
-    app.route('/candidate/', methods=['POST']) \
+    app.route('/candidate/', endpoint='new_candidate', methods=['POST']) \
              (partial(new_person, Role.CANDIDATE))
-    app.route('/interviewer/', methods=['POST']) \
+    app.route('/interviewer/', endpoint='new_interviewer', methods=['POST']) \
              (partial(new_person, Role.INTERVIEWER))
 
-    def slots(id_: int, role: Role) -> Response:
+    def slots(role: Role, id_: int) -> Response:
         if request.method == 'PUT':
             slots = request.form.getlist('slots')
             if not slots:
@@ -162,9 +177,9 @@ def get_app() -> Flask:
             return jsonify(id=id_,
                            name=name,
                            slots=[str(s) for s in slots])
-    app.route('/candidate/<int:id_>', methods=['GET', 'PUT']) \
+    app.route('/candidate/<int:id_>', endpoint='candidate_slots', methods=['GET', 'PUT']) \
              (partial(slots, Role.CANDIDATE))
-    app.route('/interviewer/<int:id_>', methods=['GET', 'PUT']) \
+    app.route('/interviewer/<int:id_>', endpoint='interviewer_slots', methods=['GET', 'PUT']) \
              (partial(slots, Role.INTERVIEWER))
 
     @app.route('/interview', methods=['GET'])
@@ -173,3 +188,5 @@ def get_app() -> Flask:
         slots = find_interview_slots(ids)
         return jsonify(ids=ids,
                        slots=[str(s) for s in slots])
+
+    return app
