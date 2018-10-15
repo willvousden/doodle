@@ -21,7 +21,7 @@ class Role(enum.IntEnum):
 
 
 @contextmanager
-def get_cursor(transaction: bool=False) -> Iterator[sqlite3.Cursor]:
+def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
     # manually.
@@ -29,50 +29,57 @@ def get_cursor(transaction: bool=False) -> Iterator[sqlite3.Cursor]:
         if transaction:
             connection.execute('BEGIN;')
             try:
-                yield connection.cursor()
+                yield connection
             except:
                 connection.execute('ROLLBACK;')
                 raise
             else:
                 connection.execute('COMMIT;')
         else:
-            yield connection.cursor()
+            yield connection
 
 
 def init_db() -> None:
+    '''
+    Initialise the database from the schema file.
+    '''
     with open(_schema) as f:
         script = f.read()
-    with get_cursor() as cursor:
-        cursor.executescript(script)
+    with get_connection() as connection:
+        connection.executescript(script)
 
 
 def validate_time(time: datetime) -> bool:
+    '''
+    Determine whether a time is a valid interview time; that is, whether it's on
+    the hour.
+    '''
     return all(t == 0 for t in (time.minute, time.second, time.microsecond))
 
 
 def create_person(name: str, role: Role) -> int:
-    with get_cursor(transaction=True) as cursor:
-        cursor.execute('''
-                       INSERT INTO person
-                       (name, role)
-                       VALUES
-                       (:name, :role);
-                       ''',
-                       {'name': name, 'role': int(role)})
-        return cursor.lastrowid
+    with get_connection(transaction=True) as connection:
+        return connection.execute('''
+                                  INSERT INTO person
+                                  (name, role)
+                                  VALUES
+                                  (:name, :role);
+                                  ''',
+                                  {'name': name, 'role': int(role)}) \
+                         .lastrowid
 
 
 def get_times(id_: int) -> Tuple[int, str, Role, List[datetime]]:
-    with get_cursor() as cursor:
-        cursor.execute('''
-                       SELECT p.name, p.role, t.time
-                       FROM person p
-                       LEFT JOIN person_time t
-                       ON p.id = t.person_id
-                       WHERE p.id = :id
-                       ''',
-                       {'id': id_})
-        rows = cursor.fetchall()
+    with get_connection() as connection:
+        rows = connection.execute('''
+                                  SELECT p.name, p.role, t.time
+                                  FROM person p
+                                  LEFT JOIN person_time t
+                                  ON p.id = t.person_id
+                                  WHERE p.id = :id
+                                  ''',
+                                  {'id': id_}) \
+                         .fetchall()
         if rows:
             return (id_,
                     rows[0][0],
@@ -87,39 +94,42 @@ def add_times(id_: int, times: Iterable[datetime]) -> None:
                'time': str(time)}
               for time in times)
 
-    with get_cursor(transaction=True) as cursor:
-        cursor.execute('SELECT COUNT(*) FROM person p WHERE p.id = :id',
-                       {'id': id_})
-        if cursor.fetchone()[0] == 0:
+    with get_connection(transaction=True) as connection:
+        count = connection.execute('''
+                                   SELECT COUNT(*)
+                                   FROM person p
+                                   WHERE p.id = :id
+                                   ''', {'id': id_}) \
+                          .fetchone()[0]
+        if count == 0:
             # No such person.
             raise KeyError(id_)
 
-        cursor.executemany('''
-                           INSERT OR REPLACE INTO person_time
-                           (person_id, time)
-                           VALUES
-                           (:person_id, :time)
-                           ''', params)
+        connection.executemany('''
+                               INSERT OR REPLACE INTO person_time
+                               (person_id, time)
+                               VALUES
+                               (:person_id, :time)
+                               ''', params)
 
 
 def find_interview_times(ids: Iterable[int]) -> List[datetime]:
     id_params = {f':id{n}': id_ for n, id_ in enumerate(ids)}
     id_list = ', '.join(id_params.keys())
 
-    with get_cursor() as cursor:
+    with get_connection() as connection:
         # Get all the times for any of the specified people.
-        cursor.execute(f'''
-                       SELECT t.time
-                       FROM person p
-                       WHERE p.id IN ({id_list})
-                       JOIN person_time t
-                       ON p.id = t.person_id
-                       GROUP BY t.time
-                       HAVING COUNT(p.id) = :count
-                       ''',
-                       {'count': len(id_params), **id_params})
-        rows = cursor.fetchall()
-        return [datetime.fromisoformat(r[2]) for r in rows if r]
+        cursor = connection.execute(f'''
+                                    SELECT t.time
+                                    FROM person p
+                                    WHERE p.id IN ({id_list})
+                                    JOIN person_time t
+                                    ON p.id = t.person_id
+                                    GROUP BY t.time
+                                    HAVING COUNT(p.id) = :count
+                                    ''',
+                                    {'count': len(id_params), **id_params})
+        return [datetime.fromisoformat(r[2]) for r in cursor if r]
 
 
 def get_app() -> Flask:
