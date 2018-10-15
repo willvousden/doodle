@@ -61,6 +61,10 @@ def validate_time(time: datetime) -> bool:
 
 
 def create_person(name: str, role: Role) -> int:
+    '''
+    Add a new person to the database with a given name.  Returns the ID of the
+    newly added person.
+    '''
     with get_connection(transaction=True) as c:
         return c.execute('''
                          INSERT INTO person
@@ -131,7 +135,8 @@ def find_interview_times(ids: Iterable[int]) -> List[datetime]:
     id_list = ', '.join(f':{k}' for k in id_params.keys())
 
     with get_connection() as c:
-        # Get all the times for any of the specified people.
+        # Group the person/time combinations by time, and count the group sizes.
+        # Select only the groups with all the requested people.
         cursor = c.execute(f'''
                            SELECT t.time
                            FROM person p
