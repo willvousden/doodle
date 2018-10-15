@@ -22,9 +22,12 @@ class Role(enum.IntEnum):
 
 @contextmanager
 def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
+    '''
+    Get a sqlite3 connection object, optionally in a transaction.
+    '''
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
-    # manually.
+    # explicitly.
     with closing(sqlite3.connect(_url, isolation_level=None)) as connection:
         if transaction:
             connection.execute('BEGIN;')
@@ -114,6 +117,9 @@ def add_times(id_: int, times: Iterable[datetime]) -> None:
 
 
 def find_interview_times(ids: Iterable[int]) -> List[datetime]:
+    '''
+    Get the times at which a list of people are all available.
+    '''
     id_params = {f':id{n}': id_ for n, id_ in enumerate(ids)}
     id_list = ', '.join(id_params.keys())
 
