@@ -8,5 +8,6 @@ CREATE TABLE IF NOT EXISTS person_time (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id INTEGER,
     time TEXT NOT NULL,
-    FOREIGN KEY (person_id) REFERENCES person (id)
+    FOREIGN KEY (person_id) REFERENCES person (id),
+    UNIQUE (person_id, time)
 );

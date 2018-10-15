@@ -32,6 +32,7 @@ def get_cursor(transaction: bool=False) -> sqlite3.Cursor:
                 yield connection.cursor()
             except:
                 connection.execute('ROLLBACK;')
+                raise
             else:
                 connection.execute('COMMIT;')
         else:
@@ -86,17 +87,19 @@ def add_times(id_: int, times: Iterable[datetime]) -> None:
                'time': str(time)}
               for time in times)
 
-    with get_cursor() as cursor:
-        try:
-            cursor.executemany('''
-                               INSERT INTO person_time
-                               (person_id, time)
-                               VALUES
-                               (:person_id, :time)
-                               ''', params)
-        except sqlite3.IntegrityError as e:
+    with get_cursor(transaction=True) as cursor:
+        cursor.execute('SELECT COUNT(*) FROM person p WHERE p.id = :id',
+                       {'id': id_})
+        if cursor.fetchone()[0] == 0:
             # No such person.
-            raise KeyError(id_) from e
+            raise KeyError(id_)
+
+        cursor.executemany('''
+                           INSERT OR REPLACE INTO person_time
+                           (person_id, time)
+                           VALUES
+                           (:person_id, :time)
+                           ''', params)
 
 
 def find_interview_times(ids: Iterable[int]) -> List[datetime]:
