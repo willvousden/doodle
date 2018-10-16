@@ -40,22 +40,22 @@ Four operations are supported:
 
 2. Setting the available times for a person in ISO-8601 format (``PUT``):
     
-        $ curl -X PUT -F time=2018-10-15T09 -F time=2018-10-15T10 http://localhost:5000/candidate/1
-        {"id":1,"name":"Carl","times":["2018-10-15 09:00:00","2018-10-15 10:00:00"]}
-        $ curl -X PUT -F time=2018-10-15T10 -F time=2018-10-15T11 http://localhost:5000/interviewer/2
-        {"id":2,"name":"Philipp","times":["2018-10-15 10:00:00","2018-10-15 11:00:00"]}
+        $ curl -X PUT -F time=2018-10-15T09Z -F time=2018-10-15T10Z http://localhost:5000/candidate/1
+        {"id":1,"name":"Carl","times":["2018-10-15T09:00:00Z","2018-10-15T10:00:00Z"]}
+        $ curl -X PUT -F time=2018-10-15T10Z -F time=2018-10-15T11Z http://localhost:5000/interviewer/2
+        {"id":2,"name":"Philipp","times":["2018-10-15T10:00:00Z","2018-10-15T11:00:00Z"]}
 
     Each time must be on the hour and specify a timezone, or a ``400`` error is issued.
 
 3. Retrieving the available times for a person (``GET``)?
     
         $ curl http://localhost:5000/candidate/1
-        {"id":1,"name":"Carl","times":["2018-10-15 09:00:00","2018-10-15 10:00:00"]}
+        {"id":1,"name":"Carl","times":["2018-10-15T09:00:00Z","2018-10-15T10:00:00Z"]}
 
 4. Finding the overlap between several people's availabilities:
     
         $ curl 'http://localhost:5000/interview?id=1&id=2
-        {"ids":[1,2],"times":["2018-10-18 09:00:00"]}
+        {"ids":[1,2],"times":["2018-10-18T09:00:00Z"]}
 
 
 Notes/wishlist
