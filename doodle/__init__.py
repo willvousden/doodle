@@ -190,7 +190,7 @@ def get_app() -> Flask:
             # Add times to a person.
             assert id_ is not None
             try:
-                times = request.form.getlist('times', parse_time)
+                times = request.form.getlist('time', parse_time)
             except ValueError:
                 # Couldn't parse the times.
                 abort(400, description='Invalid times given.')
