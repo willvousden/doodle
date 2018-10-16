@@ -8,7 +8,7 @@ from maya import MayaDT
 from pathlib import Path
 from typing import *
 
-_db_file = 'doodle.db'
+_db_path = None
 _schema = Path(__file__).parent / 'schema.sql'
 
 __all__ = ['get_app', 'init_db', 'Role']
@@ -27,15 +27,20 @@ class Person(NamedTuple):
 
 
 @contextmanager
-def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
+def get_connection(transaction: bool=False, db_path: Union[Path, str]=None) -> Iterator[sqlite3.Connection]:
     '''
     Get a contextmanager for a sqlite3 connection object, optionally in a
     transaction.
     '''
+    if db_path is None:
+        db_path = _db_path
+    if db_path is None:
+        raise RuntimeError('database path not set')
+
     # Python's DB API transaction model is really weird and counter-intuitive,
     # so just put the connection in auto-commit mode and manage transactions
     # explicitly.
-    with closing(sqlite3.connect(_db_file, isolation_level=None)) as connection:
+    with closing(sqlite3.connect(str(db_path), isolation_level=None)) as connection:
         if transaction:
             connection.execute('BEGIN')
             try:
@@ -49,13 +54,13 @@ def get_connection(transaction: bool=False) -> Iterator[sqlite3.Connection]:
             yield connection
 
 
-def init_db() -> None:
+def init_db(db_path: Union[Path, str]) -> None:
     '''
     Initialise the database from the schema file.
     '''
     with open(_schema) as f:
         script = f.read()
-    with get_connection() as c:
+    with get_connection(db_path=db_path) as c:
         c.executescript(script)
 
 
@@ -180,7 +185,9 @@ def find_interview_times(ids: Iterable[int]) -> List[MayaDT]:
         return [parse_time(r[0]) for r in cursor if r]
 
 
-def get_app() -> Flask:
+def get_app(db_path: Union[Path, str]) -> Flask:
+    global _db_path
+    _db_path = Path(db_path)
     app = Flask(__name__)
 
     def person(role: Role, id_: int=None) -> Response:
