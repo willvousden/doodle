@@ -47,7 +47,7 @@ Four operations are supported:
 
     Each time must be on the hour and specify a timezone, or a ``400`` error is issued.
 
-3. Retrieving the available times for a person (``GET``)?
+3. Retrieving the available times for a person (``GET``):
     
         $ curl http://localhost:5000/candidate/1
         {"id":1,"name":"Carl","times":["2018-10-15T09:00:00Z","2018-10-15T10:00:00Z"]}
