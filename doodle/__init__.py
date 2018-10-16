@@ -1,10 +1,10 @@
 import sqlite3
 
 from contextlib import closing, contextmanager
-from datetime import datetime
 from enum import IntEnum
 from flask import Flask, Response, jsonify, abort, request
 from functools import partial
+from maya import MayaDT
 from pathlib import Path
 from typing import *
 
@@ -23,7 +23,7 @@ class Person(NamedTuple):
     id_: int
     name: str
     role: Role
-    times: List[datetime]
+    times: List[MayaDT]
 
 
 @contextmanager
@@ -59,13 +59,15 @@ def init_db() -> None:
         c.executescript(script)
 
 
-def parse_time(string: str) -> datetime:
+def parse_time(string: str) -> MayaDT:
     '''
-    Convert a string into a datetime.  If it's not valid (i.e., on the hour),
-    raise a ValueError.
+    Convert a string into a time.  If it's not valid (i.e., not on the hour or
+    has no timezone), raise a ValueError.
     '''
-    time = datetime.fromisoformat(string)
+    time = MayaDT.from_iso8601(string)
     if any(t != 0 for t in (time.minute, time.second, time.microsecond)):
+        raise ValueError(string)
+    if time.timezone is None:
         raise ValueError(string)
     return time
 
@@ -111,13 +113,13 @@ def get_times(id_: int, role: Role) -> Person:
             raise KeyError(id_)
 
 
-def add_times(id_: int, role: Role, times: Iterable[datetime]) -> Person:
+def add_times(id_: int, role: Role, times: Iterable[MayaDT]) -> Person:
     '''
     Add interview times for a given person.  Any times that already exist are
     replaced.  Returns the same as ``get_times``.
     '''
     params = ({'person_id': id_,
-               'time': str(time)}
+               'time': time.iso8601()}
               for time in times)
 
     with get_connection(transaction=True) as c:
@@ -155,7 +157,7 @@ def add_times(id_: int, role: Role, times: Iterable[datetime]) -> Person:
                       [parse_time(r[2]) for r in rows if r[2]])
 
 
-def find_interview_times(ids: Iterable[int]) -> List[datetime]:
+def find_interview_times(ids: Iterable[int]) -> List[MayaDT]:
     '''
     Get the times at which a list of people are all available.
     '''
@@ -218,7 +220,7 @@ def get_app() -> Flask:
 
         return jsonify(id=person.id_,
                        name=person.name,
-                       times=[str(t) for t in person.times])
+                       times=[t.iso8601() for t in person.times])
 
     @app.route('/candidate/', methods=['POST'])
     @app.route('/candidate/<int:id_>', methods=['GET', 'PUT'])
@@ -237,6 +239,6 @@ def get_app() -> Flask:
             abort(400)
         times = find_interview_times(ids)
         return jsonify(ids=ids,
-                       times=[str(t) for t in times])
+                       times=[t.iso8601() for t in times])
 
     return app

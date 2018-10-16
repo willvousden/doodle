@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 flask = "*"
+maya = "*"
 
 [dev-packages]
 ipython = "*"

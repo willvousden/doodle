@@ -1,12 +1,25 @@
 Doodle API
 ==========
 
+This web API implements a basic calendar for finding common availability between interviewers and
+interviewees.  The API assumes that interviews are held in one-hour slots starting and ending on the
+hour.
+
+Requirements
+------------
+
+* Python 3.6+
+* [Pipenv](https://pipenv.readthedocs.io/en/latest/)
+
 Quickstart
 ----------
 
-To run:
+First, install dependencies with Pipenv:
 
     $ pipenv install
+
+Then run the app's entry point:
+
     $ pipenv run ./app.py
 
 To run an example:
@@ -32,6 +45,8 @@ Four operations are supported:
         $ curl -X PUT -F time=2018-10-15T10 -F time=2018-10-15T11 http://localhost:5000/interviewer/2
         {"id":2,"name":"Philipp","times":["2018-10-15 10:00:00","2018-10-15 11:00:00"]}
 
+    Each time must be on the hour and specify a timezone, or a ``400`` error is issued.
+
 3. Retrieving the available times for a person (``GET``)?
     
         $ curl http://localhost:5000/candidate/1
@@ -43,7 +58,7 @@ Four operations are supported:
         {"ids":[1,2],"times":["2018-10-18 09:00:00"]}
 
 
-Notes/wish list
+Notes/wishlist
 ---------------
 
 1. Currently, a PUT request adds and/or overwrites times.  Perhaps it should replace all existing
