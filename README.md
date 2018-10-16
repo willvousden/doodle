@@ -8,7 +8,7 @@ hour.
 Requirements
 ------------
 
-* Python 3.5+
+* Python 3.6+
 * [Pipenv](https://pipenv.readthedocs.io/en/latest/)
 
 Quickstart
